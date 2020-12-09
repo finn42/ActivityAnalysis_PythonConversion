@@ -3,7 +3,7 @@
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.stats import binom, poisson, chisquare
+from scipy.stats import binom, poisson, chisquare,chi2
 
 def activityCount(Data,FrameSize,HopSize,Thresh,actType):
     ''' def activityCount(Data,FrameSize,HopSize,Thresh,actType)
@@ -63,7 +63,7 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
     Acts['Total'] = Acts.sum(1)/len(cols) # ratio of signals active per frame
     return Acts
 
-def equisplit(counts,nBins):
+def equisplit(counts,nBins,minim = 5):
     ''' function to split discrete distribution into maximally-even sized nBins.
     If the distribution does not split cleanly (bin with less than 5 samples), 
     repeat evaluation with one less bin, to a min of 3 bins.
@@ -73,7 +73,6 @@ def equisplit(counts,nBins):
      
      Function used by simpleActivityTest
  	'''
-    minim = 5
     n = nBins
 
     cumV = counts.cumsum()
@@ -91,7 +90,7 @@ def equisplit(counts,nBins):
     for i in range(len(cuts)-1):
         dists.append(counts.loc[cuts[i]:cuts[i+1]-1].sum())
 
-    if np.min(dists)<5:
+    if np.min(dists)<minim:
         print('Too many bins')
         if nBins>2:
             cuts = equisplit(counts,nBins-1)
@@ -147,3 +146,80 @@ def coordScoreSimple(Data,FrameSize,Thresh,actType,Nbins):
     C=score_C(np.array(CS))
     return C
 
+# [Chi,p,DAct,Bins,v1,v2] = alternatingActivitiesTest(AllC1,AllC2,k)
+def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
+    
+    N = Acts1.shape
+    Np = N[1]-1
+    L = N[0]
+    AC1 =  Acts1['Total']*Np
+    Acts1 = Acts1.drop(columns=['Total'])
+    AC2 =  Acts2['Total']*Np
+    Acts2 = Acts2.drop(columns=['Total'])
+
+    if L<50:
+        print('Too few frames for analysis.')
+        return
+    if (Acts1+Acts2).max().max()>1:
+        print('These forms of activity are not exclusive, use the biact function instead.')
+        return
+
+    Model = pd.DataFrame()
+    altModel = pd.DataFrame()
+
+    aL = np.arange(Np)
+    Counts = pd.DataFrame(index = aL)
+    meas = pd.Series(AC1).value_counts()
+    Counts['Measured1'] = 0
+    Counts.loc[meas.index,'Measured1'] = meas.values
+    meas = pd.Series(AC2).value_counts()
+    Counts['Measured2'] = 0
+    Counts.loc[meas.index,'Measured2'] = meas.values
+
+    Measured = pd.DataFrame(index = aL)
+    for i in range(Np):
+        Measured[i] = np.zeros(Np)
+        if Counts.loc[i,'Measured2']>0:
+            sub=AC1.loc[AC2==i].value_counts()
+            Measured.loc[sub.index,i] = sub.values
+
+    Model = pd.DataFrame(index = aL)
+    pM2 = Counts['Measured2']/L
+    for i in range(Np):
+        Model[i] = pM2*Counts.loc[i,'Measured1']
+
+    cuts1 = equisplit(Counts['Measured1'],nBins ,nBins*6);
+    cuts2 = equisplit(Counts['Measured2'],nBins ,nBins*6);
+
+    tabMod = pd.DataFrame()
+    tabMea = pd.DataFrame()
+    for j in range(len(cuts2)-1):
+        a = []
+        b = []
+        for i in range(len(cuts1)-1):   
+            A = Model.loc[cuts1[i]:cuts1[i+1]-1,cuts2[j]:cuts2[j+1]-1]
+            a.append(A.sum().sum())
+            B = Measured.loc[cuts1[i]:cuts1[i+1]-1,cuts2[j]:cuts2[j+1]-1]
+            b.append(B.sum().sum())
+        tabMod[j]=np.array(a)
+        tabMea[j]=np.array(b)
+
+    st = ((tabMod-tabMea)**2/tabMod).sum().sum()
+    p = 1-chi2.cdf(st, sum(tabMod.shape)-2)
+
+    stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
+    return stest
+
+def coordScoreAlternating(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
+	t = pd.Series(Data.index)
+	sF = 1/t.diff().median()
+	winSize = int(FrameSize/sF)
+	N = Data.shape
+	CS=[]
+	for i in range(winSize):
+	    Acts1 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
+	    Acts2 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
+	    stest = alternatingActivitiesTest(Acts1,Acts2,nBins = Nbins)
+	    CS.append(stest['pvalue'])
+	C=score_C(np.array(CS))
+	return C
