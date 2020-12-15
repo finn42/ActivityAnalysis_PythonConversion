@@ -147,7 +147,7 @@ def coordScoreSimple(Data,FrameSize,Thresh,actType,Nbins):
     return C
 
 # [Chi,p,DAct,Bins,v1,v2] = alternatingActivitiesTest(AllC1,AllC2,k)
-def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
+def relatedActivitiesTest(Acts1,Acts2,nBins = 3):
     
     N = Acts1.shape
     Np = N[1]-1
@@ -163,9 +163,6 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
     if (Acts1+Acts2).max().max()>1:
         print('These forms of activity are not exclusive, use the biact function instead.')
         return
-
-    Model = pd.DataFrame()
-    altModel = pd.DataFrame()
 
     aL = np.arange(Np)
     Counts = pd.DataFrame(index = aL)
@@ -210,7 +207,7 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
     stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
     return stest
 
-def coordScoreAlternating(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
+def coordScoreRelated(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
 	t = pd.Series(Data.index)
 	sF = 1/t.diff().median()
 	winSize = int(FrameSize/sF)
@@ -219,7 +216,7 @@ def coordScoreAlternating(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins
 	for i in range(winSize):
 	    Acts1 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
 	    Acts2 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
-	    stest = alternatingActivitiesTest(Acts1,Acts2,nBins = Nbins)
+	    stest = relatedActivitiesTest(Acts1,Acts2,nBins = Nbins)
 	    CS.append(stest['pvalue'])
 	C=score_C(np.array(CS))
 	return C
