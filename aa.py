@@ -21,7 +21,7 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
              HopSize - the spacing between these intervals of signal (can be smaller than FrameSize)
              Thresh - a minimum value (scalar) for events measured in frames
              actType - a string specifying the type of signal event to detect
-                     one of {'Inc','Dec','Change'} (so far)
+                     one of {'Inc','Dec','Change','UBound','LBound'} (so far)
      Outputs: Acts - a pandas dataframe with index 'Time' of time points (centres of frames)
                      columns for every column of signal in Data (carries names)
                      final column ['Total'] that reports the ratio of signals active per frame
@@ -33,12 +33,13 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
     cols = Data.columns
     
     newTime = np.arange(FrameSize/2+Time[0],Time[-1],HopSize)
-    Acts = pd.DataFrame()
-    Acts['Time']=newTime
-    Acts=Acts.set_index('Time')
+    Acts = pd.DataFrame(columns = cols)
+
 
     # for increases
     if actType == 'Inc':
+        Acts['Time']=newTime
+        Acts=Acts.set_index('Time')
         for col in cols:
             f = interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
             a=f(newTime+FrameSize/2)-f(newTime-FrameSize/2)
@@ -46,6 +47,8 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
             a[a<Thresh] = 0
             Acts[col]=a
     if actType == 'Dec':
+        Acts['Time']=newTime
+        Acts=Acts.set_index('Time')
         for col in cols:
             f = interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
             a=f(newTime+FrameSize/2)-f(newTime-FrameSize/2)
@@ -53,12 +56,42 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
             a[a<=-Thresh] = 1
             Acts[col]=a 
     if actType == 'Change':
+        Acts['Time']=newTime
+        Acts=Acts.set_index('Time')
         for col in cols:
             f = interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
             a=np.abs(f(newTime+FrameSize/2)-f(newTime-FrameSize/2))
             a[a>=Thresh] = 1
             a[a<Thresh] = 0
-            Acts[col]=a    
+            Acts[col]=a  
+            
+    if actType == 'UBound':
+        # prime the Acts dataframe to have teh same columns as Data
+        # interate over rows of 
+        for i in range(len(newTime)):
+            t = newTime[i]
+            frame = Data.loc[t-(FrameSize*0.5):t+(FrameSize*0.5),:].copy()
+            UB = frame.max(0)
+            UB[UB>=Thresh] = Thresh
+            UB[UB<Thresh] = 0
+            UB[UB==Thresh] = 1
+            df2 = pd.DataFrame(columns = cols)
+            df2.loc[t] = UB
+            Acts = Acts.append(df2)
+    
+    if actType == 'LBound':
+        # prime the Acts dataframe to have teh same columns as Data
+        # interate over rows of 
+        for i in range(len(newTime)):
+            t = newTime[i]
+            frame = Data.loc[t-(FrameSize*0.5):t+(FrameSize*0.5),:].copy()
+            UB = frame.min(0)
+            UB[UB<=Thresh] = Thresh
+            UB[UB>Thresh] = 0
+            UB[UB==Thresh] = 1
+            df2 = pd.DataFrame(columns = cols)
+            df2.loc[t] = UB
+            Acts =Acts.append(df2)
 
     Acts['Total'] = Acts.sum(1)/len(cols) # ratio of signals active per frame
     return Acts
