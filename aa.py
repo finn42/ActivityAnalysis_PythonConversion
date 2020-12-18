@@ -274,3 +274,94 @@ def framedSum(AC,FrameSize):
     Framed[Framed>0] = 1
     V = Framed.sum(1)#/len(AllC.columns)
     return V
+
+def localActivityTest(AllC,FrameSize,ShuffleRange,Iter):
+    # function to evaluate nonparametricly the distribution of coincidences of events in AllC
+    # measured in frames FrameSize, with alignment shuffling range of ShufflrRange over Iter iterations
+    # TODO evaluate distributions on local rank rather than absolute counts
+    #function uses framedSum and score_c and AllC is optimally set up by actionCount, with Total removed
+
+    sF=np.round(1/pd.Series(AllC.index).diff().median()) # assumes sample rate is >=1 Hz
+    S = AllC.shape
+    Np = S[1] # number of responses in AllC
+    L = S[0] # number of samples in which activity has been assessed
+    ShuffS = ShuffleRange*sF # the number of samples overwhich shuffling is performed
+    Results = pd.DataFrame(index = AllC.index)
+    Results['Activity-levels'] = framedSum(AllC,FrameSize) 
+
+    # generate alternative distributions with shuffle range
+    AlternativeCoincs = pd.DataFrame(0, index=AllC.index, columns=np.arange(Iter))
+    for i in range(Iter):
+        shifts = np.round(np.random.random_sample(Np)*ShuffS - ShuffS/2)
+        # option = Loop
+        SAllC = pd.DataFrame(index=AllC.index)
+        for rn in range(S[1]):
+            offs = int(shifts[rn])
+            A = AllC[rn].shift(offs)
+            if offs<0:
+                A.iloc[offs:] = AllC[rn].iloc[:-offs].values
+            else:
+                if offs>0:
+                    A.iloc[:offs] = AllC[rn].iloc[-offs:].values
+                else:
+                    A = AllC[rn]
+            SAllC[rn]=A
+        AlternativeCoincs[i] = framedSum(SAllC,FrameSize) 
+
+    # now evaluate distributions over complete excerpt
+    # TODO: trim the ends by half a shuffle range before evaluating statistics
+    aL = np.arange(Np+1)
+    TrueCounts = pd.DataFrame(0,index = aL,columns = ['Measured'])
+    meas = pd.Series(Results['Activity-levels']).value_counts()
+    TrueCounts.loc[meas.index,'Measured'] = meas.values/L
+
+    AltCounts = pd.DataFrame(0,index = aL,columns=np.arange(Iter))
+    for i in range(Iter): 
+        meas = pd.Series(AlternativeCoincs[i]).value_counts()
+        AltCounts.loc[meas.index,i] = meas.values/L
+
+    # empDist
+    cdistf = TrueCounts.cumsum()
+    ACdistf = AltCounts.cumsum()
+    meanAltCDistf = ACdistf.mean(1)
+    distanceTrueMean = (cdistf.add(-meanAltCDistf,0)**2).sum()**(0.5)
+    distanceMAlt = (ACdistf.add(-meanAltCDistf,0)**2).sum()**(0.5)
+    p = len(distanceMAlt[distanceMAlt>distanceTrueMean.values[0]])/Iter
+    CS = score_C(p)
+
+    #capture distibutions per frame for local activity stats
+    AltFrameCounts = pd.DataFrame(0,index=AlternativeCoincs.index,columns=aL)
+    Results['Local_p']= 0.5
+    for t in AlternativeCoincs.index:
+        alt_lvls = AlternativeCoincs.loc[t].values
+        actlvl_Counts = pd.DataFrame(0,index = aL,columns=[t])
+        meas = pd.Series(alt_lvls).value_counts()
+        actlvl_Counts.loc[meas.index,t] = meas.values
+        AltFrameCounts.loc[t] = actlvl_Counts.transpose().values.cumsum()/Iter
+        Results.loc[t,'Local_p'] = AltFrameCounts.loc[t,Results.loc[t,'Activity-levels']]
+    AltFrameCounts = AltFrameCounts
+
+    pVal = Results['Local_p']
+    pVal[pVal<10.0**(-5)]= 10.0**(-5)
+    surp = np.log10((1-pVal)/pVal)
+    surp[surp>3] = 3
+    surp[surp<-3] = -3
+    Results['Surprise'] = surp
+        
+#    [pVal,Coinc,CoincRank,CoincSurprise,AlternativeCoincs,AltP,altpVal,NPCscore,altNPCscore]
+    stest = {'pvalue':p,'MeasuredResults':Results,'Models':AlternativeCoincs,'CoordScore':CS}
+    return stest
+
+def activityLevelRanks(AC):
+    # take in activity level time series and convert to rank values from cdf
+    Np = AC.max()
+    aL = np.arange(Np+1)
+    TrueCounts = pd.DataFrame(0,index = aL,columns = ['Measured'])
+    meas = pd.Series(AC).value_counts()
+    TrueCounts.loc[meas.index,'Measured'] = meas.values/L
+    TrueCounts['cdf'] = TrueCounts.cumsum()
+
+    T = AC.copy()
+    for index, row in TrueCounts.iterrows():
+        T[T==index] = row['cdf']
+    return T
