@@ -253,3 +253,24 @@ def coordScoreRelated(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
 	    CS.append(stest['pvalue'])
 	C=score_C(np.array(CS))
 	return C
+
+def framedSum(AC,FrameSize):
+    # AC is the output of actionCount, 
+    # framesize is in the units of the AC index (time, s)
+    # output is a counting of activity over frames of duration FrameSize. Basically convolution. 
+    if 'Total' in AC.columns:
+        AllC = AC.drop(columns=['Total'])
+    else:
+        AllC = AC.copy()
+    sF=np.round(1/pd.Series(AllC.index).diff().median())
+    frameN = int(FrameSize*sF)
+    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[-1]+((1+np.arange(frameN))/sF), columns=AllC.columns))
+    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[0]-((1+np.arange(frameN))/sF), columns=AllC.columns))
+    AllC = AllC.sort_index()
+    AllBlur = AllC.copy()
+    for i in range(frameN-1):
+        AllBlur += AllC.shift(i+1)
+    Framed = AllBlur.loc[AC.index]
+    Framed[Framed>0] = 1
+    V = Framed.sum(1)#/len(AllC.columns)
+    return V
