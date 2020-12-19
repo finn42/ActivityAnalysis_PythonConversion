@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+import math
 from scipy.interpolate import interp1d
 from scipy.stats import binom, poisson, chisquare,chi2
 
@@ -179,6 +180,88 @@ def coordScoreSimple(Data,FrameSize,Thresh,actType,Nbins):
     C=score_C(np.array(CS))
     return C
 
+
+def alternatingActivitiesTest(Acts1,Acts2,nBins = 3): 
+    N = Acts1.shape
+    Np = N[1]-1
+    L = N[0]
+    AC1 =  np.round(Acts1['Total']*Np)
+    Acts1 = Acts1.drop(columns=['Total'])
+    AC2 =  np.round(Acts2['Total']*Np)
+    Acts2 = Acts2.drop(columns=['Total'])
+
+    if L<50:
+        print('Too few frames for analysis.')
+        #return
+    if (Acts1+Acts2).max().max()>1:
+        print('These forms of activity are not exclusive, use the biact function instead.')
+        #return
+
+    # two criteria for evaluating distribution: Total activity and ratio of one or the other
+    ACall =  AC1 + AC2
+    p = ACall.sum()/(Np*L) # probability of any activity
+    p1 = AC1.sum()/(Np*L) 
+    p2 = AC2.sum()/(Np*L)
+    p12 = p2/p
+
+    aL = np.arange(Np+1)
+    MeasuredAll = pd.DataFrame(0,index = aL,columns = ['Measured'])
+    meas = pd.Series(ACall).value_counts()
+    MeasuredAll.loc[meas.index,'Measured'] = meas.values
+
+    Model = pd.DataFrame(index = aL)
+    for s in range(Np+1):
+        subcount = pd.Series(0.0,index = aL)
+        for r in range(s+1):
+            if s == 0:
+                idx = int(0.5*Np)
+            else:
+                idx = int(Np*(r)/(s+1))
+            if s <= 50:
+                subcount[idx] = math.comb(s,r)*((1-p12)**(s-r))*(p12**r)
+            else:
+                subcount[idx]=math.exp(-s*p12)*((s*p12)**r)/math.factorial(r)
+        Model[s] = subcount*MeasuredAll.loc[s].values
+    Independent = Model.sum(1)
+
+    Measured = pd.DataFrame(index = aL)
+    for s in range(Np+1):
+        sub=AC2[ACall==s].value_counts()
+        subcount = pd.Series(0.0,index = aL)
+        if len(sub)>0:
+            subcount = pd.Series(0.0,index = aL)
+            for r in sub.index:
+                if s == 0:
+                    idx = int(0.5*Np)
+                else:
+                    idx = int(Np*(r)/(s+1))
+                subcount[idx] = sub.loc[r]
+        Measured[s] = subcount
+
+    cuts1 = equisplit(Independent,nBins ,nBins*6);
+    cuts2 = equisplit(MeasuredAll['Measured'],nBins ,nBins*6);
+
+    tabMod = pd.DataFrame()
+    tabMea = pd.DataFrame()
+    for j in range(len(cuts2)-1):
+        a = []
+        b = []
+        for i in range(len(cuts1)-1):   
+            A = Model.loc[cuts1[i]:cuts1[i+1]-1,cuts2[j]:cuts2[j+1]-1]
+            a.append(A.sum().sum())
+            B = Measured.loc[cuts1[i]:cuts1[i+1]-1,cuts2[j]:cuts2[j+1]-1]
+            b.append(B.sum().sum())
+        tabMod[j]=np.array(a)
+        tabMea[j]=np.array(b)
+
+    st = ((tabMod-tabMea)**2/tabMod).sum().sum()
+    p = 1-chi2.cdf(st, sum(tabMod.shape)-2)
+
+    stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
+    return stest
+
+
+
 # [Chi,p,DAct,Bins,v1,v2] = alternatingActivitiesTest(AllC1,AllC2,k)
 def relatedActivitiesTest(Acts1,Acts2,nBins = 3):
     
@@ -192,9 +275,6 @@ def relatedActivitiesTest(Acts1,Acts2,nBins = 3):
 
     if L<50:
         print('Too few frames for analysis.')
-        return
-    if (Acts1+Acts2).max().max()>1:
-        print('These forms of activity are not exclusive, use the biact function instead.')
         return
 
     aL = np.arange(Np)
