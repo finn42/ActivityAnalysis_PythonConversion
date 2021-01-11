@@ -3,8 +3,9 @@
 import pandas as pd
 import numpy as np
 import math
-from scipy.interpolate import interp1d
-from scipy.stats import binom, poisson, chisquare,chi2
+import scipy as sc 
+# from scipy.interpolate import interp1d
+# from scipy.stats import binom, poisson, chisquare,chi2
 
 def activityCount(Data,FrameSize,HopSize,Thresh,actType):
     ''' def activityCount(Data,FrameSize,HopSize,Thresh,actType)
@@ -42,7 +43,7 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
         Acts['Time']=newTime
         Acts=Acts.set_index('Time')
         for col in cols:
-            f = interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
+            f = sc.interpolate.interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
             a=f(newTime+FrameSize/2)-f(newTime-FrameSize/2)
             a[a>=Thresh] = 1
             a[a<Thresh] = 0
@@ -51,7 +52,7 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
         Acts['Time']=newTime
         Acts=Acts.set_index('Time')
         for col in cols:
-            f = interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
+            f = sc.interpolate.interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
             a=f(newTime+FrameSize/2)-f(newTime-FrameSize/2)
             a[a>-Thresh] = 0
             a[a<=-Thresh] = 1
@@ -60,7 +61,7 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
         Acts['Time']=newTime
         Acts=Acts.set_index('Time')
         for col in cols:
-            f = interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
+            f = sc.interpolate.interp1d(Time,Data[col], kind='nearest',fill_value='extrapolate')
             a=np.abs(f(newTime+FrameSize/2)-f(newTime-FrameSize/2))
             a[a>=Thresh] = 1
             a[a<Thresh] = 0
@@ -146,16 +147,16 @@ def simpleActivityTest(A,Np,Nbins):
     Counts['Measured'] = 0
     Counts.loc[meas.index,'Measured'] = meas.values
     if Np <100:
-        Counts['Model'] = binom.pmf(aL, Np, A.sum()/L)*L
+        Counts['Model'] = sc.stats.binom.pmf(aL, Np, A.sum()/L)*L
     else:
-        Counts['Model'] = poisson.pmf(aL, Np*A.sum()/L)*L
+        Counts['Model'] = sc.stats.poisson.pmf(aL, Np*A.sum()/L)*L
 
     cuts = equisplit(Counts['Model'],Nbins)    
     dists = pd.DataFrame()
     for i in range(len(cuts)-1):
         dists = dists.append(Counts.loc[cuts[i]:cuts[i+1]-1,:].sum(), ignore_index=True)
 
-    st,p = chisquare(dists['Measured'], f_exp=dists['Model'])
+    st,p = sc.stats.chisquare(dists['Measured'], f_exp=dists['Model'])
 
     stest = {'Chi2':st,'pvalue':p,'Counts':Counts,'Bins':dists}
     
@@ -255,11 +256,25 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
         tabMea[j]=np.array(b)
 
     st = ((tabMod-tabMea)**2/tabMod).sum().sum()
-    p = 1-chi2.cdf(st, sum(tabMod.shape)-2)
+    p = 1-sc.stats.chi2.cdf(st, sum(tabMod.shape)-2)
 
     stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
     return stest
 
+
+def coordScoreAlternating(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
+	t = pd.Series(Data.index)
+	sF = 1/t.diff().median()
+	winSize = int(FrameSize/sF)
+	N = Data.shape
+	CS=[]
+	for i in range(winSize):
+	    Acts1 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
+	    Acts2 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
+	    stest = alternatingActivitiesTest(Acts1,Acts2,nBins = Nbins)
+	    CS.append(stest['pvalue'])
+	C=score_C(np.array(CS))
+	return C
 
 
 # [Chi,p,DAct,Bins,v1,v2] = alternatingActivitiesTest(AllC1,AllC2,k)
@@ -315,20 +330,19 @@ def relatedActivitiesTest(Acts1,Acts2,nBins = 3):
         tabMea[j]=np.array(b)
 
     st = ((tabMod-tabMea)**2/tabMod).sum().sum()
-    p = 1-chi2.cdf(st, sum(tabMod.shape)-2)
+    p = 1-sc.stats.chi2.cdf(st, sum(tabMod.shape)-2)
 
     stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
     return stest
 
-def coordScoreRelated(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
-	t = pd.Series(Data.index)
+def coordScoreRelated(Data1,Data2,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
+	t = pd.Series(Data1.index)
 	sF = 1/t.diff().median()
 	winSize = int(FrameSize/sF)
-	N = Data.shape
 	CS=[]
 	for i in range(winSize):
-	    Acts1 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
-	    Acts2 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
+	    Acts1 = activityCount(Data1.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
+	    Acts2 = activityCount(Data2.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
 	    stest = relatedActivitiesTest(Acts1,Acts2,nBins = Nbins)
 	    CS.append(stest['pvalue'])
 	C=score_C(np.array(CS))
@@ -445,3 +459,108 @@ def activityLevelRanks(AC):
     for index, row in TrueCounts.iterrows():
         T[T==index] = row['cdf']
     return T
+
+def framedSum(AC,FrameSize):
+    # AC is the output of actionCount, 
+    # framesize is in the units of the AC index (time, s)
+    # output is a counting of activity over frames of duration FrameSize. Basically convolution. 
+    if 'Total' in AC.columns:
+        AllC = AC.drop(columns=['Total'])
+    else:
+        AllC = AC.copy()
+    sF=np.round(1/pd.Series(AllC.index).diff().median())
+    frameN = int(FrameSize*sF)
+    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[-1]+((1+np.arange(frameN))/sF), columns=AllC.columns))
+    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[0]-((1+np.arange(frameN))/sF), columns=AllC.columns))
+    AllC = AllC.sort_index()
+    AllBlur = AllC.copy()
+    for i in range(frameN-1):
+        AllBlur += AllC.shift(i+1)
+    Framed = AllBlur.loc[AC.index]
+    Framed[Framed>0] = 1
+    V = Framed.sum(1)/len(AllC.columns)
+    return V
+
+def Uniprob_Shuffle(AC,ShuffleRange,FrameSize):
+    # AC is the output of actionCount, point process of action per response time series 
+    # framesize is in the units of the AC index (time, s)
+    # ShuffleRange is in the units of the AC index (time, s)
+    # output is a counting of activity over frames of duration FrameSize. Basically convolution. 
+    if 'Total' in AC.columns:
+        AllC = AC.drop(columns=['Total'])
+    else:
+        AllC = AC.copy()
+    sF=np.round(1/pd.Series(AllC.index).diff().median())
+    frameN = int(FrameSize*sF)
+    ShuffleN = int(ShuffleRange*sF)
+    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[-1]+((1+np.arange(ShuffleN))/sF), columns=AllC.columns))
+    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[0]-((1+np.arange(ShuffleN))/sF), columns=AllC.columns))
+    AllC = AllC.sort_index()
+    AllBlur = AllC.copy()
+    for i in range(ShuffleN-1):
+        AllBlur += AllC.shift(i+1)
+    Uni_Spread = AllBlur.loc[AC.index]*frameN/ShuffleN
+#     lastN = len(Uni_Spread)
+#     HalfShuffN = int(ShuffleN/2) 
+#     for i in range(HalfShuffN):
+#         Uni_Spread.iloc[i] = Uni_Spread.iloc[i]*ShuffleN/(i+HalfShuffN)
+#         Uni_Spread.iloc[lastN-i] = Uni_Spread.iloc[lastN-i]*ShuffleN/(i+HalfShuffN)
+    Uni_Spread[Uni_Spread>1] = 1
+    
+    return Uni_Spread
+
+def Local_Act_Dist_nk(p):
+    # p is an ordered list of independent probabilities for a given activity
+    # produce dataframe of the cumulative distribution of at least N elements of p being active
+    # reduce the list number of unique values
+    unique, counts = np.unique(p, return_counts=True)
+    combos = dict(zip(unique, counts))
+    
+    C = pd.DataFrame(columns = ['Count','Probability'])
+    C = C.append({'Count':len(p),'Probability': np.prod(p)},  ignore_index=True)
+    for i in range(len(combos)):
+        q = 1-unique[i]
+        K = len(C)
+        for k in range(1,counts[i]+1):
+            for j in range(K):
+                prob = C['Probability'].iloc[j]*((q/unique[i])**k)*math.comb(counts[i],k)
+                C=C.append({'Count':C['Count'].iloc[j]-k,'Probability':prob},  ignore_index=True)
+    #print(C['Probability'].sum())
+
+    C = C.sort_values(by=['Count']).reset_index()
+    C['cdf'] = C['Probability'].cumsum()
+    D = C['Count'].diff().shift(-1)
+    D.iloc[len(D)-1] = 1
+    #print(C)
+
+    ActLvl=C.loc[D==1,['Count','cdf']].copy().set_index('Count')
+    return ActLvl
+
+def Analytic_local_cdfs(AC,ShuffleRange,FrameSize):
+    Uni_Spread = Uniprob_Shuffle(AC,ShuffleRange,FrameSize)
+    Ordered_Spread = pd.DataFrame(np.sort(Uni_Spread.values, axis=1), index=Uni_Spread.index, columns=Uni_Spread.columns)
+    PastDists = {}
+    tic = time.time()
+    V = Ordered_Spread.copy()
+    aL = np.arange(len(Uni_Spread.columns)+1)
+    AltFrameCounts = pd.DataFrame(0,index=V.index,columns=aL)
+
+    for t,row in V.iterrows():
+        r = row.copy()
+        MinLvl = np.sum(r==1)
+        r[r==1]=0
+        p = r[r>0]
+        p_name = str(p.values)
+        if p_name in PastDists:
+            ActLvl = PastDists[p_name].copy()
+        else:
+            ActLvl=Local_Act_Dist_nk(p)
+            PastDists[p_name]=ActLvl.copy()
+        ActLvl.index = ActLvl.index+int(MinLvl)
+        actlvl_dist = pd.DataFrame(0,index = aL,columns=[t])
+        actlvl_dist.loc[ActLvl.index,t] = ActLvl.values
+        actlvl_dist.loc[ActLvl.index[-1]:,t] = 1.0
+        AltFrameCounts.loc[t] = actlvl_dist.T.loc[t]
+    print('total eval time:' + str(time.time()-tic))        
+    print('dictionary of distributions:' + str(len(PastDists)))
+    return AltFrameCounts
