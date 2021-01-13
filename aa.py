@@ -30,14 +30,10 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
      Version 5.0, first in Python 3
      Finn Upham 2020 12 07
      '''
-
     Time = Data.index
     cols = Data.columns
-    
     newTime = np.arange(FrameSize/2+Time[0],Time[-1],HopSize)
     Acts = pd.DataFrame(columns = cols)
-
-
     # for increases
     if actType == 'Inc':
         Acts['Time']=newTime
@@ -65,8 +61,7 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
             a=np.abs(f(newTime+FrameSize/2)-f(newTime-FrameSize/2))
             a[a>=Thresh] = 1
             a[a<Thresh] = 0
-            Acts[col]=a  
-            
+            Acts[col]=a   
     if actType == 'UBound':
         # prime the Acts dataframe to have teh same columns as Data
         # interate over rows of 
@@ -80,7 +75,6 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
             df2 = pd.DataFrame(columns = cols)
             df2.loc[t] = UB
             Acts = Acts.append(df2)
-    
     if actType == 'LBound':
         # prime the Acts dataframe to have teh same columns as Data
         # interate over rows of 
@@ -94,7 +88,6 @@ def activityCount(Data,FrameSize,HopSize,Thresh,actType):
             df2 = pd.DataFrame(columns = cols)
             df2.loc[t] = UB
             Acts =Acts.append(df2)
-
     Acts['Total'] = Acts.sum(1)/len(cols) # ratio of signals active per frame
     return Acts
 
@@ -109,10 +102,8 @@ def equisplit(counts,nBins,minim = 5):
      Function used by simpleActivityTest
  	'''
     n = nBins
-
     cumV = counts.cumsum()
     eTot = cumV.iloc[-1]
-    
     cuts = [counts.index[0]]
     for i in range(1,n):
         crit = (cumV-eTot*(i/n))
@@ -120,11 +111,9 @@ def equisplit(counts,nBins,minim = 5):
         #crit = abs((cumV-cumV.iloc[-1]*(i/n)))
         cuts.append(crit.idxmin())
     cuts.append(counts.index[-1])
-    
     dists = []
     for i in range(len(cuts)-1):
         dists.append(counts.loc[cuts[i]:cuts[i+1]-1].sum())
-
     if np.min(dists)<minim:
         print('Too many bins')
         if nBins>2:
@@ -135,9 +124,17 @@ def equisplit(counts,nBins,minim = 5):
 
 def simpleActivityTest(A,Np,Nbins):
     ''' function to run a goodness of fit test on a random activity model
-    against the measure distrubution of activity levels
+    against the measure distrubution of activity levels.
+        Input: A - Activity-level time series, [Total] column output from actionCount function
+                    This series should use FrameSize = HopSize for non-overlapping time frames
+               Np - Number of responses in the collection overwhich activity was counted (Data columns)
+               Nbins - number of bins to use in the goodness of fit test. Is reduced if necessary.
 
-    stest = {'Chi2':st,'pvalue':p,'Counts':Counts,'Bins':dists}
+        Ouput: stest = {'Chi2':st,'pvalue':p,'Counts':Counts,'Bins':dists}
+            Chi2 - chisquare statistic on the goodness of fit test
+            pvalue - the corresponding pvalue, given the degrees of freedom used
+            Counts - vector of # time frames per activity levels in the random model and real data
+            Bins - numbers of frames per bin, on which the GoF test was applied
     '''
     ac = np.round(A.values*Np) # get these back to count values, integers
     meas = pd.Series(ac).value_counts()
@@ -164,11 +161,26 @@ def simpleActivityTest(A,Np,Nbins):
 
 
 def score_C(pvals):
+    ''' score_C(pvals)
+    Converts an array of pvalues from a sequence of activity tests to an average coordination score
+    The score represents the concentration of evidence of coodination across responses. Used specifically for coordScore* functions, to agreggate results over different offsets of frames to samples in evaluated time series.
+    Input: pvals - a list or array of p-values [0,1] from inferential tests
+    Output: C - value from [0,16], with 2 equivalent to pval<=0.01. 
+    '''
     # pval must be an np.array
     C =  -np.log10(pvals+10.0**(-16)).mean() 
     return C
 
 def coordScoreSimple(Data,FrameSize,Thresh,actType,Nbins):
+    ''' coordScoreSimple(Data,FrameSize,Thresh,actType,Nbins)
+        Function to evaluate coordination of one type of activity  to a shared stimulus as measured across a collection of synchronised continuous responses. Test applied is parametric, against a random binomial model of point processes. Suitable for activity like continuous rating changes, not suitable for response activities with more complicated temporal dependencies (oscillators etc.).
+        Inputs: Data - Dataframe of N unidimensional response time series. Index is timestamps.
+                Framesize - interval over which events across responses are counted as coordinated (window of synchrony). In the timestamp units (usually s).
+                Thresh - Minimum value for response event to be counted, depending on activity evaluated
+                actType - type of response even evaluated. Options: {'Inc','Dec','Change','Ubound',...} see actionCount function.
+                Nbins - number of bins overwhich to initially apply goodness of fit test for comparision between random model and experiment distribution of activity levels. 
+        Outputs: C - Coordination score for this activity in this collection of responses. C is a value between 0 and 16, with C>2 equivalent to p>0.01
+    '''
     t = pd.Series(Data.index)
     sF = 1/t.diff().median()
     winSize = int(FrameSize/sF)
@@ -182,7 +194,22 @@ def coordScoreSimple(Data,FrameSize,Thresh,actType,Nbins):
     return C
 
 
-def alternatingActivitiesTest(Acts1,Acts2,nBins = 3): 
+def alternatingActivitiesTest(Acts1,Acts2,Nbins = 3): 
+    '''alternatingActivitiesTest(Acts1,Acts2,Nbins = 3)
+        function to run a goodness of fit test looking at the independence of two exclusive forms of activity occuring in the same collection of responses, such as 'Inc' and 'Dec' in ratings.
+        
+        Input: Acts1 - Action point processes for action type 1 on response collection (output of actionCount)
+               Acts2 - Action point processes for action type 2 on same response collection
+               Nbins - number of bins to use per dimension of the contingency table test. Is reduced if necessary.
+
+        Ouput: stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
+            Chi2 - chisquare statistic on the contingency table test
+            pvalue - the corresponding pvalue, given the degrees of freedom used
+            Model - dataframe of expected distribution of joint activity levels based on assumed independence and exclusivity
+            Measured - dataframe of actual distribution of joint-activity levels
+            BinsModel - table of reduced expected distribution for test
+            BinsMeasured - table of reduced actual distribution for test
+    '''
     N = Acts1.shape
     Np = N[1]-1
     L = N[0]
@@ -190,26 +217,20 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
     Acts1 = Acts1.drop(columns=['Total'])
     AC2 =  np.round(Acts2['Total']*Np)
     Acts2 = Acts2.drop(columns=['Total'])
-
     if L<50:
         print('Too few frames for analysis.')
-        #return
     if (Acts1+Acts2).max().max()>1:
         print('These forms of activity are not exclusive, use the biact function instead.')
-        #return
-
     # two criteria for evaluating distribution: Total activity and ratio of one or the other
     ACall =  AC1 + AC2
     p = ACall.sum()/(Np*L) # probability of any activity
     p1 = AC1.sum()/(Np*L) 
     p2 = AC2.sum()/(Np*L)
     p12 = p2/p
-
     aL = np.arange(Np+1)
     MeasuredAll = pd.DataFrame(0,index = aL,columns = ['Measured'])
     meas = pd.Series(ACall).value_counts()
     MeasuredAll.loc[meas.index,'Measured'] = meas.values
-
     Model = pd.DataFrame(index = aL)
     for s in range(Np+1):
         subcount = pd.Series(0.0,index = aL)
@@ -224,7 +245,6 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
                 subcount[idx]=math.exp(-s*p12)*((s*p12)**r)/math.factorial(r)
         Model[s] = subcount*MeasuredAll.loc[s].values
     Independent = Model.sum(1)
-
     Measured = pd.DataFrame(index = aL)
     for s in range(Np+1):
         sub=AC2[ACall==s].value_counts()
@@ -238,10 +258,8 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
                     idx = int(Np*(r)/(s+1))
                 subcount[idx] = sub.loc[r]
         Measured[s] = subcount
-
-    cuts1 = equisplit(Independent,nBins ,nBins*6);
-    cuts2 = equisplit(MeasuredAll['Measured'],nBins ,nBins*6);
-
+    cuts1 = equisplit(Independent,Nbins ,Nbins*6);
+    cuts2 = equisplit(MeasuredAll['Measured'],Nbins ,Nbins*6);
     tabMod = pd.DataFrame()
     tabMea = pd.DataFrame()
     for j in range(len(cuts2)-1):
@@ -254,32 +272,54 @@ def alternatingActivitiesTest(Acts1,Acts2,nBins = 3):
             b.append(B.sum().sum())
         tabMod[j]=np.array(a)
         tabMea[j]=np.array(b)
-
     st = ((tabMod-tabMea)**2/tabMod).sum().sum()
     p = 1-sc.stats.chi2.cdf(st, sum(tabMod.shape)-2)
-
     stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
     return stest
 
 
 def coordScoreAlternating(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
-	t = pd.Series(Data.index)
-	sF = 1/t.diff().median()
-	winSize = int(FrameSize/sF)
-	N = Data.shape
-	CS=[]
-	for i in range(winSize):
-	    Acts1 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
-	    Acts2 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
-	    stest = alternatingActivitiesTest(Acts1,Acts2,nBins = Nbins)
-	    CS.append(stest['pvalue'])
-	C=score_C(np.array(CS))
-	return C
+    ''' coordScoreAlternating(Data,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3)
+        Function to evaluate the independence of two type of activity to a shared stimulus as measured across a single collection of synchronised continuous responses. Test applied is parametric, with the assumption of independence between the two forms of activity and exclusivity (in any frame, a response cannot report both types of activity). Suitable for activity like continuous rating changes.
+        Inputs: Data - Dataframe of N unidimensional response time series. Index is timestamps.
+                Framesize - interval over which events across responses are counted as coordinated (window of synchrony). In the timestamp units (usually s).
+                Thresh1 - Minimum value for first response event to be counted, depending on activity evaluated
+                actType1 - first type of response even evaluated. Options: {'Inc','Dec','Change','Ubound',...} see actionCount function.
+                Thresh2 - Minimum value for second response event to be counted
+                actType2 - secpmd type of response even evaluated
+                Nbins - number of bins overwhich to initially apply goodness of fit test for comparision between random model and experiment distribution of activity levels. 
+        Outputs: C - Coordination score for this activity in this collection of responses. C is a value between 0 and 16, with C>2 equivalent to p>0.01
+    '''
+    t = pd.Series(Data.index)
+    sF = 1/t.diff().median()
+    winSize = int(FrameSize/sF)
+    N = Data.shape
+    CS=[]
+    for i in range(winSize):
+        Acts1 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
+        Acts2 = activityCount(Data.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
+        stest = alternatingActivitiesTest(Acts1,Acts2,nBins = Nbins)
+        CS.append(stest['pvalue'])
+    C=score_C(np.array(CS))
+    return C
 
 
 # [Chi,p,DAct,Bins,v1,v2] = alternatingActivitiesTest(AllC1,AllC2,k)
 def relatedActivitiesTest(Acts1,Acts2,nBins = 3):
-    
+    '''relatedActivitiesTest(Acts1,Acts2,nBins = 3)
+        function to run a goodness of fit test looking at the independence of a type of activity in two collections of responses synchronised to the same stimulus. Working with actual distributions of activity levels for both collections, it tests against independence. 
+        
+        Input: Acts1 - Action point processes for action on response collection 1(output of actionCount)
+               Acts2 - Action point processes for action on response collection 2
+               Nbins - number of bins to use per dimension of the contingency table test. Is reduced if necessary.
+        Ouput: stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
+            Chi2 - chisquare statistic on the contingency table test
+            pvalue - the corresponding pvalue, given the degrees of freedom used
+            Model - dataframe of expected distribution of joint activity levels based on assumed independence and exclusivity
+            Measured - dataframe of actual distribution of joint-activity levels
+            BinsModel - table of reduced expected distribution for test
+            BinsMeasured - table of reduced actual distribution for test
+    '''
     N = Acts1.shape
     Np = N[1]-1
     L = N[0]
@@ -335,45 +375,49 @@ def relatedActivitiesTest(Acts1,Acts2,nBins = 3):
     stest = {'Chi2':st,'pvalue':p,'Model':Model,'Measured':Measured,'BinsModel':tabMod,'BinsMeasured':tabMea}
     return stest
 
-def coordScoreRelated(Data1,Data2,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3):
-	t = pd.Series(Data1.index)
-	sF = 1/t.diff().median()
-	winSize = int(FrameSize/sF)
-	CS=[]
-	for i in range(winSize):
-	    Acts1 = activityCount(Data1.loc[i:],FrameSize,FrameSize,Thresh1,actType1)
-	    Acts2 = activityCount(Data2.loc[i:],FrameSize,FrameSize,Thresh2,actType2)
-	    stest = relatedActivitiesTest(Acts1,Acts2,nBins = Nbins)
-	    CS.append(stest['pvalue'])
-	C=score_C(np.array(CS))
-	return C
+def coordScoreRelated(Data1,Data2,FrameSize,Thresh,actType,Nbins=3):
+    ''' coordScoreRelated(Data1,Data2,FrameSize,Thresh1,actType1,Thresh2,actType2,Nbins=3)
+        Function to evaluate the independence of one type of activity in two collections of responses synchronised to the same stimulus. Working with actual distributions of activity levels for both collections, the test applied is parametric, with the assumption of independence. Suitable for activity like continuous rating changes.
+        Inputs: Data1 - Dataframe of N unidimensional response time series. Index is timestamps.
+                Data2 - Dataframe of M response time series with the same index as Data 1.
+                Framesize - interval over which events across responses are counted as coordinated (window of synchrony). In the timestamp units (usually s).
+                Thresh - Minimum value for response event to be counted, depending on activity evaluated
+                actType - type of response even evaluated. Options: {'Inc','Dec','Change','Ubound',...} see actionCount function.
+                Nbins - number of bins overwhich to initially apply goodness of fit test for comparision between random model and experiment distribution of activity levels. 
+        Outputs: C - Coordination score for this activity in this collection of responses. C is a value between 0 and 16, with C>2 equivalent to p>0.01
+    '''
+    t = pd.Series(Data1.index)
+    sF = 1/t.diff().median()
+    winSize = int(FrameSize/sF)
+    CS=[]
+    for i in range(winSize):
+        Acts1 = activityCount(Data1.loc[i:],FrameSize,FrameSize,Thresh,actType)
+        Acts2 = activityCount(Data2.loc[i:],FrameSize,FrameSize,Thresh,actType)
+        stest = relatedActivitiesTest(Acts1,Acts2,nBins = Nbins)
+        CS.append(stest['pvalue'])
+    C=score_C(np.array(CS))
+    return C
 
-def framedSum(AC,FrameSize):
-    # AC is the output of actionCount, 
-    # framesize is in the units of the AC index (time, s)
-    # output is a counting of activity over frames of duration FrameSize. Basically convolution. 
-    if 'Total' in AC.columns:
-        AllC = AC.drop(columns=['Total'])
-    else:
-        AllC = AC.copy()
-    sF=np.round(1/pd.Series(AllC.index).diff().median())
-    frameN = int(FrameSize*sF)
-    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[-1]+((1+np.arange(frameN))/sF), columns=AllC.columns))
-    AllC = AllC.append(pd.DataFrame(0,index=AllC.index[0]-((1+np.arange(frameN))/sF), columns=AllC.columns))
-    AllC = AllC.sort_index()
-    AllBlur = AllC.copy()
-    for i in range(frameN-1):
-        AllBlur += AllC.shift(i+1)
-    Framed = AllBlur.loc[AC.index]
-    Framed[Framed>0] = 1
-    V = Framed.sum(1)#/len(AllC.columns)
-    return V
 
-def localActivityTest(AllC,FrameSize,ShuffleRange,Iter):
-    # function to evaluate nonparametricly the distribution of coincidences of events in AllC
-    # measured in frames FrameSize, with alignment shuffling range of ShufflrRange over Iter iterations
-    # TODO evaluate distributions on local rank rather than absolute counts
-    #function uses framedSum and score_c and AllC is optimally set up by actionCount, with Total removed
+def localActivityTest(AllC,FrameSize,ShuffleRange,Iter=1000,alpha=0.01):
+    ''' localActivityTest(AllC,FrameSize,ShuffleRange,Iter=1000,alpha=0.01)
+    function to evaluate non-parametrically the distribution of coincidences of action events in ALLC.
+    Produces global coordination test, a non parametric alternative to simpleActivityTest, and local coordination estimates for local activity detection.
+    Inputs:
+        AllC - Dataframe outputs of actionCount with Total removed, point processes of detected action in a collection of synch responses with timestamps as index
+        FrameSize - window of synchrony, interval in which actions are counted as coincident across responses. in time units of AllC index
+        ShuffleRange - interval of time (AllC index units) overwhich responses are uniformly shuffled to generate random alternative alignments.
+        Iter - number of iterations of shuffled responses used to generate alternative distributions (Monte Carlo sampling)
+        alpha is the threshold on local activity extremes, for non-parametric pvalues 1>alpha>0
+        
+        Output: stest = {'pvalue':p,'MeasuredResults':Results,'Models':AlternativeCoincs,'CoordScore':CS}
+            pvalue - rank proximity of measured activity levels to average shuffled alternatives, min 1/Iter
+            MeasuredResults: dataframe of 'Activity-levels', 'Local_p', and related 'Surprise'
+            Models: Dataframe of alternative activity-levels, with Iter columns
+            CS: Coordination score based on the pvalue.
+            
+    TODO evaluate distributions on local rank rather than absolute counts
+    '''
 
     sF=np.round(1/pd.Series(AllC.index).diff().median()) # assumes sample rate is >=1 Hz
     S = AllC.shape
@@ -434,16 +478,20 @@ def localActivityTest(AllC,FrameSize,ShuffleRange,Iter):
         AltFrameCounts.loc[t] = actlvl_Counts.transpose().values.cumsum()/Iter
         Results.loc[t,'Local_p'] = AltFrameCounts.loc[t,Results.loc[t,'Activity-levels']]
     AltFrameCounts = AltFrameCounts
-
-    pVal = Results['Local_p']
-    pVal[pVal<10.0**(-5)]= 10.0**(-5)
+    pVal = Results['Local_p']#.values
+    dprob = 1.0/Iter
+    pVal[pVal<dprob]= dprob 
+    pVal[pVal>1-dprob]= 1-dprob
     surp = np.log10((1-pVal)/pVal)
-    surp[surp>3] = 3
-    surp[surp<-3] = -3
+    surpThres = np.log10(Iter)
+    surp[surp>surpThres] = surpThres
+    surp[surp<-surpThres] = -surpThres
     Results['Surprise'] = surp
-        
-#    [pVal,Coinc,CoincRank,CoincSurprise,AlternativeCoincs,AltP,altpVal,NPCscore,altNPCscore]
-    stest = {'pvalue':p,'MeasuredResults':Results,'Models':AlternativeCoincs,'CoordScore':CS}
+    salpha = np.log10(alpha)
+    mask = (Results['Surprise']>=salpha) ^ (Results['Surprise']<=-salpha)
+    extremeCoins = Results.loc[mask]
+
+    stest = {'pvalue':p,'MeasuredResults':Results,'Models':AlternativeCoincs,'CoordScore':CS,'ActivityPeaks':extremeCoins}
     return stest
 
 def activityLevelRanks(AC):
@@ -461,9 +509,11 @@ def activityLevelRanks(AC):
     return T
 
 def framedSum(AC,FrameSize):
-    # AC is the output of actionCount, 
-    # framesize is in the units of the AC index (time, s)
-    # output is a counting of activity over frames of duration FrameSize. Basically convolution. 
+    ''' framedSum(AC,FrameSize)
+    AC is the output of actionCount
+    framesize is in the units of the AC index (time, s)
+    output is a counting of activity over frames of duration FrameSize. Basically convolution. 
+    '''
     if 'Total' in AC.columns:
         AllC = AC.drop(columns=['Total'])
     else:
@@ -478,7 +528,7 @@ def framedSum(AC,FrameSize):
         AllBlur += AllC.shift(i+1)
     Framed = AllBlur.loc[AC.index]
     Framed[Framed>0] = 1
-    V = Framed.sum(1)/len(AllC.columns)
+    V = Framed.sum(1)#/len(AllC.columns)
     return V
 
 def Uniprob_Shuffle(AC,ShuffleRange,FrameSize):
